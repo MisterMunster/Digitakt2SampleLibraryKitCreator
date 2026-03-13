@@ -161,6 +161,13 @@ body {
 }
 .nav-btn:hover { background: var(--btn-hover); color: var(--text); }
 
+.nav-btn--load {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+  margin-left: auto;
+}
+.nav-btn--load:hover { background: var(--accent-dim); color: #fff; }
+
 .browser-path {
   font-size: 9px;
   color: var(--text-dim);
@@ -250,10 +257,30 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.pane-header--flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.clear-all-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.clear-all-btn:hover { background: var(--red); border-color: var(--red); color: #fff; }
+
 .pad-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px 8px;
   padding: 12px;
   flex: 1;
   overflow: auto;
@@ -277,9 +304,9 @@ body {
   border-radius: 4px;
   display: flex;
   flex-direction: column;
-  padding: 10px 12px 8px;
+  padding: 8px 10px 6px;
   cursor: pointer;
-  min-height: 110px;
+  min-height: 90px;
   transition: border-color 0.1s, background 0.1s, box-shadow 0.1s;
   position: relative;
 }
@@ -297,11 +324,29 @@ body {
   box-shadow: 0 0 0 1px var(--accent), inset 0 0 0 1px rgba(233,69,96,0.2);
 }
 
+/* Right-hand group (T9–T16): subtle left border to mark the split */
+.pad--right {
+  border-left-color: #2a3f5a;
+}
+
 .pad.drag-over {
   border-color: var(--accent);
   background: rgba(233, 69, 96, 0.15);
   box-shadow: 0 0 12px rgba(233, 69, 96, 0.4);
 }
+
+.pad-key-hint {
+  font-size: 9px;
+  font-weight: normal;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0 4px;
+  margin-left: 4px;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+.pad.selected .pad-key-hint { color: rgba(255,255,255,0.5); border-color: rgba(255,255,255,0.2); }
 
 .pad-track {
   font-size: 11px;
@@ -316,13 +361,28 @@ body {
   color: var(--text-dim);
   flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-style: italic;
+  /* mask the edges so text fades in/out cleanly */
+  mask-image: linear-gradient(to right, transparent 0, black 6px, black calc(100% - 6px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 6px, black calc(100% - 6px), transparent 100%);
 }
 .pad.has-sample .pad-sample {
   color: var(--text);
   font-style: normal;
+}
+
+.pad-sample-text {
+  display: inline-block;
+  white-space: nowrap;
+}
+.pad-sample-text.marquee {
+  animation: marquee-scroll 5s ease-in-out infinite;
+}
+
+@keyframes marquee-scroll {
+  0%,  20% { transform: translateX(0); }
+  75%, 100% { transform: translateX(var(--scroll-dist, 0)); }
 }
 
 .pad-sample-full {

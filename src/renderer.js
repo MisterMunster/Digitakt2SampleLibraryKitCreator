@@ -5,14 +5,14 @@
 
 'use strict'
 
-const NUM_TRACKS = 8
+const NUM_TRACKS = 16
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
 const state = {
   currentDir:       null,
   selectedFile:     null,   // { name, path, type }
-  selectedPad:      null,   // 0-7
+  selectedPad:      null,   // 0-15
   kitName:          'Untitled Kit',
   kitPath:          null,
   tracks: Array.from({ length: NUM_TRACKS }, (_, i) => ({
@@ -25,9 +25,8 @@ const state = {
   midiOutputName:   '',
   midiConnected:    false,
   selectedMidiPort: null,   // MIDIOutput object chosen in modal
-  // Audio
-  isPlaying:        false,
-  playingPad:       null
+  // Audio — Set of pad indices currently playing
+  playingPads:      new Set()
 }
 
 // ─── DOM REFS ─────────────────────────────────────────────────────────────────
@@ -46,10 +45,13 @@ const btnBrowse      = $('btnBrowse')
 const browserPath    = $('browserPath')
 const browserList    = $('browserList')
 const btnAssign      = $('btnAssign')
+const btnLoadDir     = $('btnLoadDir')
 const padGrid        = $('padGrid')
+const btnClearAll    = $('btnClearAll')
 const statusMsg      = $('statusMsg')
 const deviceStatus   = $('deviceStatus')
-const previewAudio   = $('previewAudio')
+// Per-pad Audio instances for polyphonic playback
+const padAudio = new Map()   // index -> HTMLAudioElement
 
 const midiModal      = $('midiModal')
 const midiPortList   = $('midiPortList')
@@ -85,11 +87,13 @@ function buildPads() {
   padGrid.innerHTML = ''
   for (let i = 0; i < NUM_TRACKS; i++) {
     const pad = document.createElement('div')
-    pad.className = 'pad'
+    // T9–T16 (i >= 8) get a left-margin visual separator between the two hand groups
+    pad.className = i >= 8 ? 'pad pad--right' : 'pad'
     pad.dataset.index = i
+    const PAD_KEY_LABELS = ['Q','W','E','R','A','S','D','F','U','I','O','P','J','K','L',';']
     pad.innerHTML = `
-      <div class="pad-track">T${i + 1}</div>
-      <div class="pad-sample">— empty —</div>
+      <div class="pad-track">T${i + 1} <span class="pad-key-hint">${PAD_KEY_LABELS[i]}</span></div>
+      <div class="pad-sample"><span class="pad-sample-text">— empty —</span></div>
       <div class="pad-sample-full"></div>
       <div class="pad-controls">
         <button class="pad-btn pad-btn--play"  data-action="play"  disabled>▶ PLAY</button>
@@ -142,7 +146,23 @@ function refreshPad(index) {
   el.classList.toggle('has-sample', hasFile)
   el.classList.toggle('selected',   state.selectedPad === index)
 
-  el.querySelector('.pad-sample').textContent      = hasFile ? name : '— empty —'
+  // Sample name with marquee overflow detection
+  const sampleDiv  = el.querySelector('.pad-sample')
+  const sampleSpan = el.querySelector('.pad-sample-text')
+  sampleSpan.textContent = hasFile ? name : '— empty —'
+  sampleSpan.classList.remove('marquee')
+  sampleSpan.style.removeProperty('--scroll-dist')
+  if (hasFile) {
+    // Measure overflow after the DOM updates
+    requestAnimationFrame(() => {
+      const overflow = sampleSpan.scrollWidth - sampleDiv.clientWidth
+      if (overflow > 4) {
+        sampleSpan.style.setProperty('--scroll-dist', `-${overflow + 8}px`)
+        sampleSpan.classList.add('marquee')
+      }
+    })
+  }
+
   el.querySelector('.pad-sample-full').textContent = hasFile ? track.sample : ''
   el.querySelector('.pad-sample-full').title        = track.sample || ''
 
@@ -150,7 +170,7 @@ function refreshPad(index) {
   const clearBtn = el.querySelector('[data-action="clear"]')
   playBtn.disabled  = !hasFile
   clearBtn.disabled = !hasFile
-  playBtn.classList.toggle('playing', state.playingPad === index && state.isPlaying)
+  playBtn.classList.toggle('playing', state.playingPads.has(index))
 }
 
 function refreshAllPads() {
@@ -167,48 +187,68 @@ function selectPad(index) {
 // ─── PAD ACTIONS ──────────────────────────────────────────────────────────────
 
 function assignSample(padIndex, filePath) {
+  stopPad(padIndex)
   state.tracks[padIndex].sample = filePath
+  // Pre-load an Audio element so playback is instant
+  const audio = new Audio()
+  audio.preload = 'auto'
+  audio.src = 'file:///' + filePath.replace(/\\/g, '/')
+  audio.addEventListener('ended',  () => { state.playingPads.delete(padIndex); refreshPad(padIndex) })
+  audio.addEventListener('error',  (e) => { state.playingPads.delete(padIndex); refreshPad(padIndex) })
+  padAudio.set(padIndex, audio)
   refreshPad(padIndex)
   setStatus(`Assigned "${basename(filePath)}" → T${padIndex + 1}`)
 }
 
 function clearPad(index) {
+  stopPad(index)
+  const audio = padAudio.get(index)
+  if (audio) { audio.pause(); audio.src = ''; padAudio.delete(index) }
   state.tracks[index].sample = null
-  if (state.playingPad === index) stopAudio()
   refreshPad(index)
   setStatus(`T${index + 1} cleared`)
+}
+
+function clearAllPads() {
+  stopAudio()
+  for (let i = 0; i < NUM_TRACKS; i++) {
+    const audio = padAudio.get(i)
+    if (audio) { audio.pause(); audio.src = '' }
+    padAudio.delete(i)
+    state.tracks[i].sample = null
+  }
+  state.selectedPad = null
+  refreshAllPads()
+  setStatus('All pads cleared')
 }
 
 function playPad(index) {
   const filePath = state.tracks[index].sample
   if (!filePath) return
 
-  if (state.playingPad === index && state.isPlaying) { stopAudio(); return }
+  const audio = padAudio.get(index)
+  if (!audio) return
 
-  stopAudio()
-  const url = 'file:///' + filePath.replace(/\\/g, '/')
-  previewAudio.src = url
-  previewAudio.load()
-  previewAudio.play()
-    .then(() => {
-      state.isPlaying  = true
-      state.playingPad = index
-      refreshPad(index)
-      setStatus(`Playing: ${basename(filePath)}`)
-    })
-    .catch(err => setStatus(`Playback error: ${err.message}`))
+  // Always restart from the beginning (re-trigger on every hit)
+  audio.currentTime = 0
+  state.playingPads.add(index)
+  refreshPad(index)
+
+  audio.play()
+    .then(() => setStatus(`Playing: ${basename(filePath)}`))
+    .catch(() => { state.playingPads.delete(index); refreshPad(index) })
+}
+
+function stopPad(index) {
+  const audio = padAudio.get(index)
+  if (audio) { audio.pause(); audio.currentTime = 0 }
+  state.playingPads.delete(index)
+  refreshPad(index)
 }
 
 function stopAudio() {
-  previewAudio.pause()
-  previewAudio.currentTime = 0
-  const prev   = state.playingPad
-  state.isPlaying  = false
-  state.playingPad = null
-  if (prev !== null) refreshPad(prev)
+  for (const index of [...state.playingPads]) stopPad(index)
 }
-
-previewAudio.addEventListener('ended', stopAudio)
 
 // ─── FILE BROWSER ─────────────────────────────────────────────────────────────
 
@@ -216,9 +256,10 @@ async function loadDir(dirPath) {
   const result = await window.api.readDir(dirPath)
   if (!result.ok) { setStatus(`Error: ${result.error}`); return }
 
-  state.currentDir   = dirPath
-  state.selectedFile = null
-  btnAssign.disabled = true
+  state.currentDir      = dirPath
+  state.selectedFile    = null
+  state._lastDirEntries = result.entries
+  btnAssign.disabled    = true
 
   browserPath.textContent = dirPath
   browserPath.title = dirPath
@@ -281,6 +322,19 @@ async function goUp() {
   if (parent && parent !== state.currentDir) loadDir(parent)
 }
 
+function loadDirIntoPads() {
+  const result = state._lastDirEntries
+  if (!result || !result.length) { setStatus('No audio files in this folder'); return }
+
+  const files = result.filter(e => e.type === 'file')
+  if (!files.length) { setStatus('No audio files found in this folder'); return }
+
+  clearAllPads()
+  const toLoad = files.slice(0, NUM_TRACKS)
+  toLoad.forEach((f, i) => assignSample(i, f.path))
+  setStatus(`Loaded ${toLoad.length} sample${toLoad.length !== 1 ? 's' : ''} from "${basename(state.currentDir)}"`)
+}
+
 function doAssign() {
   if (!state.selectedFile) return
   if (state.selectedPad === null) {
@@ -308,17 +362,16 @@ function kitToData() {
 }
 
 function applyKitData(data) {
+  clearAllPads()
   state.kitName = data.name || 'Untitled Kit'
   kitNameInput.value = state.kitName
-  state.tracks.forEach(t => { t.sample = null })
   if (Array.isArray(data.tracks)) {
     data.tracks.forEach(t => {
-      if (t.index >= 0 && t.index < NUM_TRACKS) {
-        state.tracks[t.index].sample = t.sample || null
+      if (t.index >= 0 && t.index < NUM_TRACKS && t.sample) {
+        assignSample(t.index, t.sample)
       }
     })
   }
-  refreshAllPads()
 }
 
 function newKit() {
@@ -520,6 +573,8 @@ btnBrowse.addEventListener('click', async () => {
   if (folder) loadDir(folder)
 })
 btnAssign.addEventListener('click', doAssign)
+btnLoadDir.addEventListener('click', loadDirIntoPads)
+btnClearAll.addEventListener('click', () => { if (confirm('Clear all 16 pads?')) clearAllPads() })
 
 kitNameInput.addEventListener('input', () => { state.kitName = kitNameInput.value })
 
@@ -545,10 +600,26 @@ document.addEventListener('keydown', e => {
     if (e.key === 'S' &&  e.shiftKey) { e.preventDefault(); saveKitAs() }
   }
   if (e.key === 'Escape') { closeMidiModal(); closePushModal(); stopAudio() }
-  // Keys 1-8 select pads
-  if (!inInput && !e.ctrlKey && !e.metaKey) {
-    const n = parseInt(e.key)
-    if (n >= 1 && n <= 8) selectPad(n - 1)
+  // Home-row pad shortcuts (no modifier, not in a text input)
+  // [ A ] [ S ] [ D ] [ F ]  →  T1  T2  T3  T4
+  // [ J ] [ K ] [ L ] [ ; ]  →  T5  T6  T7  T8
+  if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // Q W E R  →  T1–T4   (left hand, top row)
+    // A S D F  →  T5–T8   (left hand, home row)
+    // U I O P  →  T9–T12  (right hand, top row)
+    // J K L ;  →  T13–T16 (right hand, home row)
+    // Shift + key → stop pad   |   key alone → play/restart pad
+    const PAD_KEYS = {
+      q:0,  w:1,  e:2,  r:3,
+      a:4,  s:5,  d:6,  f:7,
+      u:8,  i:9,  o:10, p:11,
+      j:12, k:13, l:14, ';':15
+    }
+    const idx = PAD_KEYS[e.key.toLowerCase()]
+    if (idx !== undefined) {
+      e.preventDefault()
+      if (e.shiftKey) { stopPad(idx) } else { playPad(idx) }
+    }
   }
 })
 
@@ -572,7 +643,7 @@ async function init() {
   refreshAllPads()
   const homeDir = await window.api.getHome()
   await loadDir(homeDir)
-  setStatus('Ready — select a pad, then double-click a sample or drag a file onto a pad')
+  setStatus('Ready — QWER/ASDF plays T1–T8 · UIOP/JKL; plays T9–T16 · click a pad to select, drag or double-click to assign')
 }
 
 init()
