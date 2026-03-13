@@ -1,0 +1,13 @@
+{
+  "name": "digitakt-kit-builder",
+  "version": "1.0.0",
+  "description": "Offline kit builder for the Elektron Digitakt II",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
