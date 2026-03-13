@@ -7,7 +7,10 @@ const os = require('os')
 // — no native module needed.
 
 const AUDIO_EXTS = new Set(['.wav', '.aif', '.aiff', '.mp3', '.flac', '.ogg', '.wave'])
-const DEFAULT_DIR = 'B:\\Elektron'
+// Default sample directory — Windows uses B:\Elektron, Mac/Linux falls back to ~/Music
+const DEFAULT_DIR = process.platform === 'win32'
+  ? 'B:\\Elektron'
+  : require('path').join(os.homedir(), 'Music')
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -38,7 +41,23 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'src', 'index.html'))
 
   // Build application menu
-  const menu = Menu.buildFromTemplate([
+  const isMac = process.platform === 'darwin'
+  const template = [
+    // macOS requires the first menu to be the App menu
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
     {
       label: 'File',
       submenu: [
@@ -48,7 +67,7 @@ function createWindow() {
         { label: 'Save Kit',     accelerator: 'CmdOrCtrl+S',        click: () => win.webContents.send('menu-save') },
         { label: 'Save Kit As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => win.webContents.send('menu-save-as') },
         { type: 'separator' },
-        { role: 'quit' }
+        ...(isMac ? [] : [{ role: 'quit' }])
       ]
     },
     {
@@ -71,12 +90,21 @@ function createWindow() {
         { role: 'zoomOut' }
       ]
     }
-  ])
-  Menu.setApplicationMenu(menu)
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 app.whenReady().then(createWindow)
-app.on('window-all-closed', () => app.quit())
+
+// On macOS, re-create the window when the dock icon is clicked and no windows are open
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+})
+
+// On Windows/Linux quit when all windows are closed; macOS keeps the app running
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
 
 // ─── IPC: File System ─────────────────────────────────────────────────────────
 
